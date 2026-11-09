@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Còn bao lâu nữa?</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e8eef0;
+    --panel: #f7f9f9;
+    --ink: #12303a;
+    --muted: #6b838b;
+    --line: #cbd8dc;
+    --accent: #0e7c86;
+    --soon: #c2410c;
+    --font: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1d22;
+      --panel: #16282e;
+      --ink: #e3eef0;
+      --muted: #8aa3ab;
+      --line: #274049;
+      --accent: #4fc3cd;
+      --soon: #fb923c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  main { max-width: 640px; margin: 0 auto; padding: 40px 20px 64px; }
+
+  .hero { padding: 24px 0 36px; }
+  .hero-name { margin: 0 0 8px; font-size: 1.1rem; color: var(--muted); font-weight: 500; }
+  .hero-time {
+    margin: 0;
+    font-size: clamp(2.6rem, 11vw, 4.6rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    font-variant-numeric: tabular-nums;
+  }
+  .hero-time.soon { color: var(--soon); }
+  .hero-at { margin: 12px 0 0; color: var(--muted); font-size: .95rem; }
+  .hero-empty { margin: 0; font-size: 1.4rem; font-weight: 700; }
+
+  form {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 28px;
+  }
+  form .name { grid-column: 1 / -1; }
+  input, button { font: inherit; color: inherit; }
+  input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .add {
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  @media (prefers-color-scheme: dark) { .add { color: #08242a; } }
+
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  li .info { flex: 1; min-width: 0; }
+  li .title { font-weight: 500; overflow-wrap: anywhere; }
+  li .when { font-size: .85rem; color: var(--muted); }
+  li .left { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  li.past .title, li.past .left { color: var(--muted); font-weight: 400; }
+  .del {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font-size: 1.3rem;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .del:hover { color: var(--soon); }
+  .empty { color: var(--muted); padding: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <section class="hero" aria-live="off" id="hero"></section>
+
+  <form id="form">
+    <input class="name" id="name" type="text" placeholder="Tên sự kiện, ví dụ: Đi tắm" required maxlength="80" aria-label="Tên sự kiện">
+    <input id="when" type="datetime-local" required aria-label="Thời gian">
+    <button class="add" type="submit">Thêm</button>
+  </form>
+
+  <ul id="list"></ul>
+</main>
+
+<script>
+  const KEY = "countdown-events";
+  let events = load();
+
+  const $ = (id) => document.getElementById(id);
+  const pad = (n) => String(n).padStart(2, "0");
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; }
+  }
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(events)); } catch (e) {}
+  }
+
+  // Định dạng thời gian còn lại, ví dụ "27 phút 14 giây", "2 giờ 5 phút", "3 ngày 4 giờ"
+  function format(ms, withSeconds) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const d = Math.floor(total / 86400);
+    const h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    const parts = [];
+    if (d) parts.push(d + " ngày");
+    if (d || h) parts.push(h + " giờ");
+    if (d === 0) parts.push(m + " phút");
+    else if (m) parts.push(m + " phút");
+    if (withSeconds && d === 0 && h === 0) parts.push(s + " giây");
+    return parts.join(" ");
+  }
+
+  function formatDate(ts) {
+    const dt = new Date(ts);
+    return pad(dt.getHours()) + ":" + pad(dt.getMinutes()) + ", " +
+      pad(dt.getDate()) + "/" + pad(dt.getMonth() + 1) + "/" + dt.getFullYear();
+  }
+
+  function render() {
+    const now = Date.now();
+    const sorted = [...events].sort((a, b) => a.time - b.time);
+    const upcoming = sorted.filter((e) => e.time > now);
+    const past = sorted.filter((e) => e.time <= now).reverse();
+
+    // Sự kiện gần nhất
+    const next = upcoming[0];
+    if (next) {
+      const diff = next.time - now;
+      $("hero").innerHTML =
+        '<p class="hero-name"></p><p class="hero-time"></p><p class="hero-at"></p>';
+      $("hero").querySelector(".hero-name").textContent = next.name + " còn";
+      const t = $("hero").querySelector(".hero-time");
+      t.textContent = format(diff, true);
+      t.classList.toggle("soon", diff < 3600000);
+      $("hero").querySelector(".hero-at").textContent = "Lúc " + formatDate(next.time);
+    } else {
+      $("hero").innerHTML = '<p class="hero-empty">Chưa có sự kiện nào sắp tới. Thêm một sự kiện bên dưới.</p>';
+    }
+
+    // Danh sách
+    const ul = $("list");
+    ul.innerHTML = "";
+    if (!sorted.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = "Danh sách trống.";
+      ul.appendChild(li);
+      return;
+    }
+    [...upcoming, ...past].forEach((e) => {
+      const isPast = e.time <= now;
+      const li = document.createElement("li");
+      if (isPast) li.className = "past";
+
+      const info = document.createElement("div");
+      info.className = "info";
+      const title = document.createElement("div");
+      title.className = "title";
+      title.textContent = e.name;
+      const when = document.createElement("div");
+      when.className = "when";
+      when.textContent = formatDate(e.time);
+      info.append(title, when);
+
+      const left = document.createElement("div");
+      left.className = "left";
+      left.textContent = isPast ? "Đã qua" : format(e.time - now, false);
+
+      const del = document.createElement("button");
+      del.className = "del";
+      del.type = "button";
+      del.setAttribute("aria-label", "Xóa " + e.name);
+      del.textContent = "×";
+      del.addEventListener("click", () => {
+        events = events.filter((x) => x.id !== e.id);
+        save();
+        render();
+      });
+
+      li.append(info, left, del);
+      ul.appendChild(li);
+    });
+  }
+
+  $("form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const name = $("name").value.trim();
+    const time = new Date($("when").value).getTime();
+    if (!name || isNaN(time)) return;
+    events.push({ id: Date.now() + Math.random().toString(36).slice(2), name, time });
+    save();
+    $("name").value = "";
+    render();
+  });
+
+  // Gợi ý sẵn giờ tròn tiếp theo
+  (function setDefault() {
+    const d = new Date();
+    d.setHours(d.getHours() + 1, 0, 0, 0);
+    $("when").value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
+      "T" + pad(d.getHours()) + ":00";
+  })();
+
+  render();
+  setInterval(render, 1000);
+</script>
+</body>
+</html>
