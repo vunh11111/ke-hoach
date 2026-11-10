@@ -110,6 +110,58 @@
   }
   .del:hover { color: var(--soon); }
   .empty { color: var(--muted); padding: 8px 0; }
+
+  form .actions { display: flex; gap: 8px; }
+  .ghost {
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+  }
+  .del, .edit {
+    background: none;
+    border: 0;
+    color: var(--muted);
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .edit:hover { color: var(--accent); }
+  li.editing { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+  .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin-bottom: 16px; }
+  .tabs button {
+    background: none; border: 0; border-radius: 7px; padding: 6px 16px; cursor: pointer; color: var(--muted); font-weight: 500;
+  }
+  .tabs button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .tabs button[aria-pressed="true"] { color: #08242a; } }
+
+  .cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .cal-head h2 { flex: 1; margin: 0; font-size: 1.1rem; font-weight: 700; }
+  .cal-head button { background: none; border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 20px; }
+  .wd { text-align: center; font-size: .8rem; color: var(--muted); padding: 4px 0; }
+  .day {
+    aspect-ratio: 1 / 1;
+    min-height: 44px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .day.today { border-color: var(--accent); border-width: 2px; font-weight: 700; }
+  .day.sel { background: var(--accent); color: #fff; border-color: var(--accent); }
+  @media (prefers-color-scheme: dark) { .day.sel { color: #08242a; } }
+  .dots { display: flex; gap: 3px; height: 6px; }
+  .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .day.sel .dots i { background: currentColor; }
+  .blank { visibility: hidden; }
+  .day-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
 </style>
 </head>
 <body>
@@ -117,12 +169,13 @@
   <section class="hero" aria-live="off" id="hero"></section>
 
   <form id="form">
-    <input class="name" id="name" type="text" placeholder="Tên sự kiện, ví dụ: Xem MU" required maxlength="80" aria-label="Tên sự kiện">
+    <input class="name" id="name" type="text" placeholder="Tên sự kiện, ví dụ: Đi tắm" required maxlength="80" aria-label="Tên sự kiện">
     <input id="when" type="datetime-local" required aria-label="Thời gian">
-    <button class="add" type="submit">Thêm</button>
+    <div class="actions"><button class="add" id="submit" type="submit">Thêm</button><button class="ghost" id="cancel" type="button" hidden>Hủy</button></div>
   </form>
 
-  <ul id="list"></ul>
+  <div class="tabs" role="group" aria-label="Chế độ hiển thị"><button type="button" id="tab-list">Danh sách</button><button type="button" id="tab-cal">Lịch</button></div>
+  <div id="view"></div>
 </main>
 
 <script>
@@ -161,70 +214,207 @@
       pad(dt.getDate()) + "/" + pad(dt.getMonth() + 1) + "/" + dt.getFullYear();
   }
 
-  function render() {
-    const now = Date.now();
-    const sorted = [...events].sort((a, b) => a.time - b.time);
-    const upcoming = sorted.filter((e) => e.time > now);
-    const past = sorted.filter((e) => e.time <= now).reverse();
+  function dayKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+  function toLocalInput(ts) {
+    const d = new Date(ts);
+    return dayKey(ts) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
 
-    // Sự kiện gần nhất
-    const next = upcoming[0];
-    if (next) {
-      const diff = next.time - now;
-      $("hero").innerHTML =
-        '<p class="hero-name"></p><p class="hero-time"></p><p class="hero-at"></p>';
-      $("hero").querySelector(".hero-name").textContent = next.name + " còn";
-      const t = $("hero").querySelector(".hero-time");
-      t.textContent = format(diff, true);
-      t.classList.toggle("soon", diff < 3600000);
-      $("hero").querySelector(".hero-at").textContent = "Lúc " + formatDate(next.time);
-    } else {
+  let editingId = null;
+  let lastPast = -1;
+  let view = "list";
+  try { if (localStorage.getItem("countdown-view") === "cal") view = "cal"; } catch (e) {}
+  const t0 = new Date();
+  let cal = { y: t0.getFullYear(), m: t0.getMonth() };
+  let selDay = dayKey(Date.now());
+
+  function renderHero(now) {
+    const next = [...events].filter((e) => e.time > now).sort((a, b) => a.time - b.time)[0];
+    if (!next) {
       $("hero").innerHTML = '<p class="hero-empty">Chưa có sự kiện nào sắp tới. Thêm một sự kiện bên dưới.</p>';
-    }
-
-    // Danh sách
-    const ul = $("list");
-    ul.innerHTML = "";
-    if (!sorted.length) {
-      const li = document.createElement("li");
-      li.className = "empty";
-      li.textContent = "Danh sách trống.";
-      ul.appendChild(li);
       return;
     }
-    [...upcoming, ...past].forEach((e) => {
-      const isPast = e.time <= now;
-      const li = document.createElement("li");
-      if (isPast) li.className = "past";
+    const diff = next.time - now;
+    $("hero").innerHTML = '<p class="hero-name"></p><p class="hero-time"></p><p class="hero-at"></p>';
+    $("hero").querySelector(".hero-name").textContent = next.name + " còn";
+    const t = $("hero").querySelector(".hero-time");
+    t.textContent = format(diff, true);
+    t.classList.toggle("soon", diff < 3600000);
+    $("hero").querySelector(".hero-at").textContent = "Lúc " + formatDate(next.time);
+  }
 
-      const info = document.createElement("div");
-      info.className = "info";
-      const title = document.createElement("div");
-      title.className = "title";
-      title.textContent = e.name;
-      const when = document.createElement("div");
-      when.className = "when";
-      when.textContent = formatDate(e.time);
-      info.append(title, when);
+  function makeItem(e, now) {
+    const isPast = e.time <= now;
+    const li = document.createElement("li");
+    li.className = (isPast ? "past" : "") + (e.id === editingId ? " editing" : "");
 
-      const left = document.createElement("div");
-      left.className = "left";
-      left.textContent = isPast ? "Đã qua" : format(e.time - now, false);
+    const info = document.createElement("div");
+    info.className = "info";
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = e.name;
+    const when = document.createElement("div");
+    when.className = "when";
+    when.textContent = formatDate(e.time);
+    info.append(title, when);
 
-      const del = document.createElement("button");
-      del.className = "del";
-      del.type = "button";
-      del.setAttribute("aria-label", "Xóa " + e.name);
-      del.textContent = "×";
-      del.addEventListener("click", () => {
-        events = events.filter((x) => x.id !== e.id);
-        save();
-        render();
-      });
+    const left = document.createElement("div");
+    left.className = "left";
+    if (isPast) left.textContent = "Đã qua";
+    else { left.textContent = format(e.time - now, false); left.dataset.time = e.time; }
 
-      li.append(info, left, del);
-      ul.appendChild(li);
+    const edit = document.createElement("button");
+    edit.className = "edit";
+    edit.type = "button";
+    edit.setAttribute("aria-label", "Sửa " + e.name);
+    edit.textContent = "✎";
+    edit.addEventListener("click", () => startEdit(e));
+
+    const del = document.createElement("button");
+    del.className = "del";
+    del.type = "button";
+    del.setAttribute("aria-label", "Xóa " + e.name);
+    del.textContent = "×";
+    del.addEventListener("click", () => {
+      events = events.filter((x) => x.id !== e.id);
+      if (editingId === e.id) resetForm();
+      save();
+      render();
     });
+
+    li.append(info, left, edit, del);
+    return li;
+  }
+
+  function makeList(items, now, emptyText) {
+    const ul = document.createElement("ul");
+    if (!items.length) {
+      const li = document.createElement("li");
+      li.className = "empty";
+      li.textContent = emptyText;
+      ul.appendChild(li);
+      return ul;
+    }
+    items.forEach((e) => ul.appendChild(makeItem(e, now)));
+    return ul;
+  }
+
+  function renderList(now) {
+    const sorted = [...events].sort((a, b) => a.time - b.time);
+    const items = [...sorted.filter((e) => e.time > now), ...sorted.filter((e) => e.time <= now).reverse()];
+    $("view").replaceChildren(makeList(items, now, "Danh sách trống."));
+  }
+
+  function renderCal(now) {
+    const wrap = document.createDocumentFragment();
+    const head = document.createElement("div");
+    head.className = "cal-head";
+    const mk = (text, label, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = text; b.setAttribute("aria-label", label);
+      b.addEventListener("click", fn);
+      return b;
+    };
+    const h2 = document.createElement("h2");
+    h2.textContent = "Tháng " + (cal.m + 1) + ", " + cal.y;
+    const shift = (n) => { const d = new Date(cal.y, cal.m + n, 1); cal = { y: d.getFullYear(), m: d.getMonth() }; render(); };
+    head.append(h2,
+      mk("Hôm nay", "Về hôm nay", () => { const d = new Date(); cal = { y: d.getFullYear(), m: d.getMonth() }; selDay = dayKey(Date.now()); render(); }),
+      mk("‹", "Tháng trước", () => shift(-1)),
+      mk("›", "Tháng sau", () => shift(1)));
+    wrap.appendChild(head);
+
+    const byDay = {};
+    events.forEach((e) => { (byDay[dayKey(e.time)] = byDay[dayKey(e.time)] || []).push(e); });
+
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    ["T2", "T3", "T4", "T5", "T6", "T7", "CN"].forEach((w) => {
+      const c = document.createElement("div"); c.className = "wd"; c.textContent = w; grid.appendChild(c);
+    });
+    const offset = (new Date(cal.y, cal.m, 1).getDay() + 6) % 7;
+    for (let i = 0; i < offset; i++) {
+      const c = document.createElement("div"); c.className = "blank"; grid.appendChild(c);
+    }
+    const total = new Date(cal.y, cal.m + 1, 0).getDate();
+    const todayKey = dayKey(now);
+    for (let d = 1; d <= total; d++) {
+      const key = cal.y + "-" + pad(cal.m + 1) + "-" + pad(d);
+      const list = byDay[key] || [];
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "day" + (key === todayKey ? " today" : "") + (key === selDay ? " sel" : "");
+      b.setAttribute("aria-label", "Ngày " + d + (list.length ? ", " + list.length + " sự kiện" : ""));
+      const num = document.createElement("span"); num.textContent = d;
+      const dots = document.createElement("span"); dots.className = "dots";
+      list.slice(0, 3).forEach(() => dots.appendChild(document.createElement("i")));
+      b.append(num, dots);
+      b.addEventListener("click", () => { selDay = key; render(); });
+      grid.appendChild(b);
+    }
+    wrap.appendChild(grid);
+
+    const [y, m, d] = selDay.split("-").map(Number);
+    const title = document.createElement("h3");
+    title.className = "day-title";
+    title.textContent = "Ngày " + d + "/" + m + "/" + y;
+    wrap.appendChild(title);
+    const items = (byDay[selDay] || []).sort((a, b) => a.time - b.time);
+    wrap.appendChild(makeList(items, now, "Không có sự kiện trong ngày này."));
+    $("view").replaceChildren(wrap);
+  }
+
+  function render() {
+    const now = Date.now();
+    lastPast = events.filter((e) => e.time <= now).length;
+    $("tab-list").setAttribute("aria-pressed", view === "list");
+    $("tab-cal").setAttribute("aria-pressed", view === "cal");
+    renderHero(now);
+    if (view === "cal") renderCal(now); else renderList(now);
+  }
+
+  // Mỗi giây chỉ cập nhật chữ đếm ngược, không dựng lại giao diện
+  function tick() {
+    const now = Date.now();
+    if (events.filter((e) => e.time <= now).length !== lastPast) { render(); return; }
+    renderHero(now);
+    document.querySelectorAll(".left[data-time]").forEach((el) => {
+      el.textContent = format(+el.dataset.time - now, false);
+    });
+  }
+
+  function setView(v) {
+    view = v;
+    try { localStorage.setItem("countdown-view", v); } catch (e) {}
+    render();
+  }
+
+  function startEdit(e) {
+    editingId = e.id;
+    $("name").value = e.name;
+    $("when").value = toLocalInput(e.time);
+    $("submit").textContent = "Lưu";
+    $("cancel").hidden = false;
+    render();
+    $("name").focus();
+    $("form").scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function resetForm() {
+    editingId = null;
+    $("name").value = "";
+    $("submit").textContent = "Thêm";
+    $("cancel").hidden = true;
+    setDefaultTime();
+  }
+
+  function setDefaultTime() {
+    const d = new Date();
+    d.setHours(d.getHours() + 1, 0, 0, 0);
+    $("when").value = toLocalInput(d.getTime());
   }
 
   $("form").addEventListener("submit", (ev) => {
@@ -232,22 +422,27 @@
     const name = $("name").value.trim();
     const time = new Date($("when").value).getTime();
     if (!name || isNaN(time)) return;
-    events.push({ id: Date.now() + Math.random().toString(36).slice(2), name, time });
+    if (editingId) {
+      events = events.map((e) => (e.id === editingId ? { ...e, name, time } : e));
+    } else {
+      events.push({ id: Date.now() + Math.random().toString(36).slice(2), name, time });
+    }
     save();
-    $("name").value = "";
+    // Chuyển lịch tới ngày của sự kiện vừa thêm/sửa
+    const d = new Date(time);
+    cal = { y: d.getFullYear(), m: d.getMonth() };
+    selDay = dayKey(time);
+    resetForm();
     render();
   });
 
-  // Gợi ý sẵn giờ tròn tiếp theo
-  (function setDefault() {
-    const d = new Date();
-    d.setHours(d.getHours() + 1, 0, 0, 0);
-    $("when").value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) +
-      "T" + pad(d.getHours()) + ":00";
-  })();
+  $("cancel").addEventListener("click", () => { resetForm(); render(); });
+  $("tab-list").addEventListener("click", () => setView("list"));
+  $("tab-cal").addEventListener("click", () => setView("cal"));
 
+  setDefaultTime();
   render();
-  setInterval(render, 1000);
+  setInterval(tick, 1000);
 </script>
 </body>
 </html>
