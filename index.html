@@ -162,10 +162,36 @@
   .day.sel .dots i { background: currentColor; }
   .blank { visibility: hidden; }
   .day-title { margin: 0 0 4px; font-size: 1rem; font-weight: 700; }
+
+  .nav { margin-bottom: 24px; }
+  .sep { text-align: center; color: var(--muted); font-size: .8rem; margin: 20px 0 8px; }
+  .msg { display: flex; flex-direction: column; align-items: flex-end; margin: 6px 0; }
+  .bubble {
+    background: var(--accent); color: #fff;
+    padding: 8px 14px; border-radius: 16px 16px 4px 16px;
+    max-width: 88%; white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  @media (prefers-color-scheme: dark) { .bubble { color: #08242a; } }
+  .meta { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .meta button { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: .95rem; line-height: 1; }
+  .meta button:hover { color: var(--soon); }
+  .composer {
+    position: sticky; bottom: 0;
+    display: flex; gap: 8px; align-items: flex-end;
+    background: var(--bg); padding: 12px 0 4px; margin-top: 16px;
+  }
+  .composer textarea {
+    flex: 1; resize: none; max-height: 140px;
+    font: inherit; color: inherit;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  }
+  .composer textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
 <body>
 <main>
+  <div class="tabs nav" role="group" aria-label="Trang"><button type="button" id="nav-events">Sự kiện</button><button type="button" id="nav-notes">Ghi chép</button></div>
+  <div id="page-events">
   <section class="hero" aria-live="off" id="hero"></section>
 
   <form id="form">
@@ -176,6 +202,15 @@
 
   <div class="tabs" role="group" aria-label="Chế độ hiển thị"><button type="button" id="tab-list">Danh sách</button><button type="button" id="tab-cal">Lịch</button></div>
   <div id="view"></div>
+  </div>
+
+  <div id="page-notes" hidden>
+    <div id="notes"></div>
+    <form class="composer" id="note-form">
+      <textarea id="note-input" rows="1" placeholder="Viết gì đó… (Enter để gửi, Shift+Enter để xuống dòng)" aria-label="Ghi chép mới"></textarea>
+      <button class="add" type="submit">Gửi</button>
+    </form>
+  </div>
 </main>
 
 <script>
@@ -440,8 +475,110 @@
   $("tab-list").addEventListener("click", () => setView("list"));
   $("tab-cal").addEventListener("click", () => setView("cal"));
 
+  // ---------- Ghi chép ----------
+  const NKEY = "countdown-notes";
+  const WD = ["Chủ nhật", "Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy"];
+  let notes = [];
+  try { notes = JSON.parse(localStorage.getItem(NKEY)) || []; } catch (e) {}
+  function saveNotes() { try { localStorage.setItem(NKEY, JSON.stringify(notes)); } catch (e) {} }
+
+  function dayLabel(ts) {
+    const k = dayKey(ts);
+    if (k === dayKey(Date.now())) return "Hôm nay";
+    if (k === dayKey(Date.now() - 86400000)) return "Hôm qua";
+    const d = new Date(ts);
+    return WD[d.getDay()] + ", " + pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + d.getFullYear();
+  }
+
+  function renderNotes(scrollDown) {
+    const box = $("notes");
+    box.replaceChildren();
+    if (!notes.length) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "Chưa có ghi chép nào. Viết điều gì đó bên dưới, mỗi dòng sẽ được lưu cùng giờ phút.";
+      box.appendChild(p);
+      return;
+    }
+    let lastKey = "";
+    [...notes].sort((a, b) => a.time - b.time).forEach((n) => {
+      const key = dayKey(n.time);
+      if (key !== lastKey) {
+        const sep = document.createElement("div");
+        sep.className = "sep";
+        sep.textContent = dayLabel(n.time);
+        box.appendChild(sep);
+        lastKey = key;
+      }
+      const msg = document.createElement("div");
+      msg.className = "msg";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = n.text;
+      const d = new Date(n.time);
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const time = document.createElement("time");
+      time.dateTime = d.toISOString();
+      time.textContent = pad(d.getHours()) + ":" + pad(d.getMinutes());
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "×";
+      del.setAttribute("aria-label", "Xóa ghi chép lúc " + time.textContent);
+      del.addEventListener("click", () => {
+        notes = notes.filter((x) => x.id !== n.id);
+        saveNotes();
+        renderNotes(false);
+      });
+      meta.append(time, del);
+      msg.append(bubble, meta);
+      box.appendChild(msg);
+    });
+    if (scrollDown) window.scrollTo(0, document.body.scrollHeight);
+  }
+
+  function sendNote() {
+    const input = $("note-input");
+    const text = input.value.trim();
+    if (!text) return;
+    notes.push({ id: Date.now() + Math.random().toString(36).slice(2), text, time: Date.now() });
+    saveNotes();
+    input.value = "";
+    input.style.height = "auto";
+    renderNotes(true);
+    input.focus();
+  }
+
+  $("note-form").addEventListener("submit", (ev) => { ev.preventDefault(); sendNote(); });
+  $("note-input").addEventListener("keydown", (ev) => {
+    // isComposing: tránh gửi nhầm khi đang gõ tiếng Việt bằng bộ gõ
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); sendNote(); }
+  });
+  $("note-input").addEventListener("input", (ev) => {
+    const el = ev.target;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 140) + "px";
+  });
+
+  // ---------- Chuyển trang ----------
+  let page = "events";
+  try { if (localStorage.getItem("countdown-page") === "notes") page = "notes"; } catch (e) {}
+
+  function showPage(p) {
+    page = p;
+    try { localStorage.setItem("countdown-page", p); } catch (e) {}
+    $("page-events").hidden = p !== "events";
+    $("page-notes").hidden = p !== "notes";
+    $("nav-events").setAttribute("aria-pressed", p === "events");
+    $("nav-notes").setAttribute("aria-pressed", p === "notes");
+    if (p === "notes") { renderNotes(true); $("note-input").focus(); }
+  }
+  $("nav-events").addEventListener("click", () => showPage("events"));
+  $("nav-notes").addEventListener("click", () => showPage("notes"));
+
   setDefaultTime();
   render();
+  showPage(page);
   setInterval(tick, 1000);
 </script>
 </body>
